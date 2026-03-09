@@ -1,8 +1,13 @@
 # go-webp
 
+[![Go Reference](https://pkg.go.dev/badge/github.com/skrashevich/go-webp.svg)](https://pkg.go.dev/github.com/skrashevich/go-webp)
+[![DeepWiki](https://img.shields.io/badge/DeepWiki-skrashevich%2Fgo--webp-blue.svg?logo=data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cGF0aCBkPSJNNCAxOGgxNk00IDEyaDE2TTQgNmgxNiIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPjwvc3ZnPg==)](https://deepwiki.com/skrashevich/go-webp)
+
 Pure Go encoder and decoder for the [WebP](https://developers.google.com/speed/webp) image format. No CGO, no libwebp — just Go.
 
 Supports **lossy (VP8)**, **lossless (VP8L)**, **extended format (VP8X)** with alpha channel in lossy mode, **animation**, and **metadata (ICC, EXIF, XMP)**.
+
+363 tests across 8 packages.
 
 ## Install
 
@@ -174,70 +179,93 @@ type Options struct {
 | `ALPH` (alpha) | Yes | Yes | Filters: none, horizontal, vertical, gradient. Compression: raw or VP8L. | [alpha_test.go](internal/alpha/alpha_test.go) |
 | `ANIM` (animation params) | Yes | Yes | Background color (BGRA), loop count | [vp8x_test.go](internal/riff/vp8x_test.go), [anim_test.go](internal/anim/anim_test.go) |
 | `ANMF` (animation frame) | Yes | Yes | Offset, duration, dispose/blend flags | [vp8x_test.go](internal/riff/vp8x_test.go), [anim_test.go](internal/anim/anim_test.go) |
-| `ICCP` (ICC profile) | Yes | Yes | Raw bytes round-trip | [metadata_test.go](metadata_test.go) `TestRoundTripICCProfile`, `TestVP8XFlagsOnlyICC` |
-| `EXIF` (metadata) | Yes | Yes | Raw bytes round-trip | [metadata_test.go](metadata_test.go) `TestRoundTripEXIF`, `TestChunkOrderingEXIFAfterImage` |
-| `XMP ` (metadata) | Yes | Yes | Raw bytes round-trip | [metadata_test.go](metadata_test.go) `TestRoundTripXMP` |
+| `ICCP` (ICC profile) | Yes | Yes | Raw bytes round-trip | [metadata_test.go](metadata_test.go) |
+| `EXIF` (metadata) | Yes | Yes | Raw bytes round-trip | [metadata_test.go](metadata_test.go) |
+| `XMP ` (metadata) | Yes | Yes | Raw bytes round-trip | [metadata_test.go](metadata_test.go) |
 
 ### VP8 Lossy Codec ([RFC 6386](https://datatracker.ietf.org/doc/html/rfc6386))
 
-| Feature | Status | Notes | Tests |
-|---|---|---|---|
-| Keyframe (I-frame) encoding/decoding | Yes | Full intra-prediction, DCT, arithmetic coding | [conformance_test.go](internal/vp8/conformance_test.go) `TestVP8RoundtripSolidColors`, `TestVP8RoundtripGradients` |
-| Inter-frame (P-frame) | No | Not used in WebP — each frame is an independent keyframe | — |
-| YCbCr 4:2:0 color space | Yes | | [conformance_test.go](internal/vp8/conformance_test.go) `TestVP8ColorPreservation` |
-| Macroblock prediction modes | Yes | DC, V, H, TM, B_PRED (all 10 sub-modes) | [conformance_test.go](internal/vp8/conformance_test.go) `TestVP8PredictionModes` |
-| Loop filtering | Yes | Normal and simple modes | [crosscmp_nofilter_test.go](internal/vp8/crosscmp_nofilter_test.go), [crosscmp_gradient_test.go](internal/vp8/crosscmp_gradient_test.go) |
-| Segmentation | Yes | Up to 4 segments with per-segment quantization | [crosscmp_seg_test.go](internal/vp8/crosscmp_seg_test.go) |
-| DCT partitions | Yes | Up to 8 parallel decode partitions | [dct_roundtrip_test.go](internal/vp8/dct_roundtrip_test.go), [coeff_roundtrip_test.go](internal/vp8/coeff_roundtrip_test.go) |
-| Boolean arithmetic coder | Yes | Encode + decode | [bool_test.go](internal/vp8/bool_test.go) |
-| Quality control | Yes | 0–100 range | [conformance_test.go](internal/vp8/conformance_test.go) `TestVP8QualityScaling` |
+| Feature | Encode | Decode | Notes | Tests |
+|---|---|---|---|---|
+| Keyframe (I-frame) | Yes | Yes | Full intra-prediction, DCT, boolean arithmetic coding | [conformance_test.go](internal/vp8/conformance_test.go) |
+| Inter-frame (P-frame) | — | — | Not used in WebP; each frame is an independent keyframe | — |
+| YCbCr 4:2:0 color space | Yes | Yes | Standard WebP color subsampling | [conformance_test.go](internal/vp8/conformance_test.go) |
+| Macroblock prediction modes | Yes | Yes | DC, V, H, TM, B_PRED (all 10 sub-modes) | [conformance_test.go](internal/vp8/conformance_test.go) |
+| Loop filtering | Yes | Yes | Normal and simple modes | [crosscmp_nofilter_test.go](internal/vp8/crosscmp_nofilter_test.go), [crosscmp_gradient_test.go](internal/vp8/crosscmp_gradient_test.go) |
+| Segmentation | Yes | Yes | Up to 4 segments with per-segment quantization | [crosscmp_seg_test.go](internal/vp8/crosscmp_seg_test.go) |
+| DCT partitions | Yes | Yes | Up to 8 parallel decode partitions | [dct_roundtrip_test.go](internal/vp8/dct_roundtrip_test.go), [coeff_roundtrip_test.go](internal/vp8/coeff_roundtrip_test.go) |
+| Boolean arithmetic coder | Yes | Yes | Full encode + decode | [bool_test.go](internal/vp8/bool_test.go) |
+| Quality control | Yes | — | 0–100 range mapping to quantizer parameters | [conformance_test.go](internal/vp8/conformance_test.go) |
 
 ### VP8L Lossless Codec ([Lossless Bitstream Spec](https://developers.google.com/speed/webp/docs/webp_lossless_bitstream_specification))
 
-| Feature | Status | Notes | Tests |
-|---|---|---|---|
-| ARGB pixel encoding | Yes | Full alpha channel support | [conformance_test.go](internal/vp8l/conformance_test.go) `TestVP8LRoundtripTransparency` |
-| Huffman coding | Yes | Package-merge length-limited codes | [conformance_test.go](internal/vp8l/conformance_test.go) `TestVP8LHuffmanTableValidity`, `TestVP8LKraftInequality` |
-| LZ77 back-references | Yes | Encode + decode | [encode_lz77_test.go](internal/vp8l/encode_lz77_test.go) `TestLZ77BasicRoundTrip`, `TestLZ77CompressionImprovement` |
-| Predictor transform | Yes | Encode + decode (14 modes) | [encode_transforms_test.go](internal/vp8l/encode_transforms_test.go) `TestPredictorTransformEncodeDecode`, `TestPredictorAllModes` |
-| Color (cross-color) transform | Yes | Encode + decode | [encode_transforms_test.go](internal/vp8l/encode_transforms_test.go) `TestColorTransformRoundTrip`, `TestColorTransformCoefficients` |
-| Subtract green transform | Yes | Encode + decode | [encode_transforms_test.go](internal/vp8l/encode_transforms_test.go) `TestSubtractGreenTransformEncodeDecode` |
-| Color indexing (palette) transform | Yes | Encode + decode (1–256 colors) | [encode_transforms_test.go](internal/vp8l/encode_transforms_test.go) `TestPaletteTransform2Colors`, `TestPaletteTransform256Colors` |
+| Feature | Encode | Decode | Notes | Tests |
+|---|---|---|---|---|
+| ARGB pixel encoding | Yes | Yes | Full alpha channel support | [conformance_test.go](internal/vp8l/conformance_test.go) |
+| Huffman coding | Yes | Yes | Package-merge length-limited codes | [conformance_test.go](internal/vp8l/conformance_test.go) |
+| LZ77 back-references | Yes | Yes | Distance-to-plane mapping per spec | [encode_lz77_test.go](internal/vp8l/encode_lz77_test.go) |
+| Color cache | — | Yes | Decode-only; encoder writes `use_color_cache=0` | [validation_test.go](internal/vp8l/validation_test.go) |
+| Meta prefix codes (entropy image) | — | Yes | Decode-only; encoder uses single Huffman group | — |
+| Predictor transform | Yes | Yes | All 14 spatial prediction modes | [encode_transforms_test.go](internal/vp8l/encode_transforms_test.go) |
+| Color (cross-color) transform | Yes | Yes | Channel correlation decorrelation | [encode_transforms_test.go](internal/vp8l/encode_transforms_test.go) |
+| Subtract green transform | Yes | Yes | Green channel subtraction from R and B | [encode_transforms_test.go](internal/vp8l/encode_transforms_test.go) |
+| Color indexing (palette) transform | Yes | Yes | 1–256 colors with pixel packing | [encode_transforms_test.go](internal/vp8l/encode_transforms_test.go) |
 
 ### Animation
 
-| Feature | Status | Notes | Tests |
-|---|---|---|---|
-| Frame encoding (VP8/VP8L per frame) | Yes | Each frame is an independent keyframe | [anim_test.go](internal/anim/anim_test.go) `TestEncodeDecodeRoundTrip` |
-| Canvas compositing | Yes | Full canvas state tracking | [anim_test.go](internal/anim/anim_test.go) `TestComposeMultiFrame` |
-| Dispose methods | Yes | DisposeNone, DisposeBackground | [anim_test.go](internal/anim/anim_test.go) `TestComposeFrameDisposeNone`, `TestComposeFrameDisposeBackground` |
-| Blend methods | Yes | BlendAlpha (over), BlendNone (replace) | [anim_test.go](internal/anim/anim_test.go) `TestComposeFrameBlendAlpha`, `TestComposeFrameBlendNone` |
-| Frame offsets | Yes | Even-pixel aligned X/Y offsets | [anim_test.go](internal/anim/anim_test.go) `TestComposeFrameOffset`, `TestEncodeDecodeWithOffsets` |
-| Loop count | Yes | 0 = infinite | [vp8x_test.go](internal/riff/vp8x_test.go) `TestParseANIM_InfiniteLoop` |
-| Background color | Yes | BGRA encoding | [vp8x_test.go](internal/riff/vp8x_test.go) `TestParseANIM_Basic`, `TestANIM_Encode_RoundTrip` |
+| Feature | Encode | Decode | Notes | Tests |
+|---|---|---|---|---|
+| Frame encoding (VP8/VP8L per frame) | Yes | Yes | Each frame is an independent keyframe | [anim_test.go](internal/anim/anim_test.go) |
+| Canvas compositing | Yes | Yes | Full canvas state tracking | [anim_test.go](internal/anim/anim_test.go) |
+| Dispose methods | Yes | Yes | DisposeNone, DisposeBackground | [anim_test.go](internal/anim/anim_test.go) |
+| Blend methods | Yes | Yes | BlendAlpha (over), BlendNone (replace) | [anim_test.go](internal/anim/anim_test.go) |
+| Frame offsets | Yes | Yes | Even-pixel aligned X/Y offsets | [anim_test.go](internal/anim/anim_test.go) |
+| Loop count | Yes | Yes | 0 = infinite | [vp8x_test.go](internal/riff/vp8x_test.go) |
+| Background color | Yes | Yes | BGRA encoding | [vp8x_test.go](internal/riff/vp8x_test.go) |
 
 ### Alpha Channel (ALPH)
 
-| Feature | Status | Notes | Tests |
+| Feature | Encode | Decode | Notes | Tests |
+|---|---|---|---|---|
+| No compression (raw) | Yes | Yes | Method 0 | [alpha_test.go](internal/alpha/alpha_test.go) |
+| VP8L lossless compression | Yes | Yes | Method 1 (green channel encoding) | [alpha_test.go](internal/alpha/alpha_test.go) |
+| Filter: none | Yes | Yes | | [alpha_test.go](internal/alpha/alpha_test.go) |
+| Filter: horizontal | Yes | Yes | Predictive: left pixel | [alpha_test.go](internal/alpha/alpha_test.go) |
+| Filter: vertical | Yes | Yes | Predictive: top pixel | [alpha_test.go](internal/alpha/alpha_test.go) |
+| Filter: gradient | Yes | Yes | Predictive: clamp(left + top − topleft) | [alpha_test.go](internal/alpha/alpha_test.go) |
+| Preprocessing (level reduction) | Yes | Yes | Quantization to 64 levels | [alpha_test.go](internal/alpha/alpha_test.go) |
+
+## Comparison with libwebp
+
+This implementation covers all WebP features needed for correct encoding and decoding. The table below compares with Google's [libwebp](https://chromium.googlesource.com/webm/libwebp) reference implementation:
+
+| Feature | go-webp | libwebp | Notes |
 |---|---|---|---|
-| No compression (raw) | Yes | Method 0 | [alpha_test.go](internal/alpha/alpha_test.go) `TestCompressDecompressRawMethod0` |
-| VP8L lossless compression | Yes | Method 1 (green channel encoding) | [alpha_test.go](internal/alpha/alpha_test.go) `TestCompressDecompressVP8LMethod1` |
-| Filter: none | Yes | | [alpha_test.go](internal/alpha/alpha_test.go) `TestFilterNoneRoundTrip` |
-| Filter: horizontal | Yes | Predictive: left pixel | [alpha_test.go](internal/alpha/alpha_test.go) `TestFilterHorizontalRoundTrip` |
-| Filter: vertical | Yes | Predictive: top pixel | [alpha_test.go](internal/alpha/alpha_test.go) `TestFilterVerticalRoundTrip` |
-| Filter: gradient | Yes | Predictive: clamp(left + top - topleft) | [alpha_test.go](internal/alpha/alpha_test.go) `TestFilterGradientRoundTrip` |
-| Preprocessing (level reduction) | Yes | Quantization to 64 levels | [alpha_test.go](internal/alpha/alpha_test.go) `TestEncodeALPHWithPreprocessing_RoundTrip`, `TestQuantizeAlpha_KnownValues` |
+| VP8 lossy encode/decode | Yes | Yes | |
+| VP8L lossless encode/decode | Yes | Yes | |
+| VP8X extended format | Yes | Yes | |
+| Alpha channel (ALPH) | Yes | Yes | All 4 filter types + VP8L compression |
+| Animation (ANIM/ANMF) | Yes | Yes | Encode + decode + compositing |
+| Metadata (ICC/EXIF/XMP) | Yes | Yes | Round-trip as raw bytes |
+| VP8L transforms (all 4) | Yes | Yes | Predictor, color, subtract-green, palette |
+| LZ77 back-references | Yes | Yes | |
+| Color cache (VP8L) | Decode | Yes | Encoder does not use color cache yet |
+| Meta prefix codes (VP8L) | Decode | Yes | Encoder uses single Huffman group |
+| Near-lossless preprocessing | No | Yes | libwebp-specific quality/size optimization |
+| Advanced rate control | No | Yes | libwebp multi-pass RD optimization |
+| Incremental decoding | No | Yes | |
+| CGO dependency | No | Yes (C) | go-webp is pure Go |
 
 ## Codec Details
 
 | | VP8 (Lossy) | VP8L (Lossless) |
 |---|---|---|
-| **Spec** | RFC 6386 | WebP Lossless Bitstream Spec |
+| **Spec** | [RFC 6386](https://datatracker.ietf.org/doc/html/rfc6386) | [WebP Lossless Bitstream Spec](https://developers.google.com/speed/webp/docs/webp_lossless_bitstream_specification) |
 | **Color space** | YCbCr 4:2:0 | ARGB |
 | **Output type** | `*image.YCbCr` (or `*image.NRGBA` with ALPH) | `*image.NRGBA` |
 | **Quality param** | 0–100 (default 75) | N/A |
 | **Alpha** | Yes (via ALPH chunk) | Yes (native) |
-| **Compression** | DCT + arithmetic coding | Huffman + LZ77 |
+| **Compression** | DCT + boolean arithmetic coding | Huffman + LZ77 |
 
 ## CLI Tool
 
@@ -260,7 +288,9 @@ webpconv -o output.png input.webp
 
 ## Limitations
 
+- **Color cache and meta prefix codes** are decoded but not yet used in the encoder. This does not affect correctness — output files are valid per spec — but means lossless compression ratios are not yet optimal compared to libwebp.
 - **Metadata chunks are stored as raw bytes.** ICC profiles, EXIF, and XMP are round-tripped but not parsed or interpreted.
+- **No near-lossless mode.** libwebp offers a near-lossless preprocessing step that is not part of the WebP spec; this implementation does not replicate it.
 
 ## License
 
