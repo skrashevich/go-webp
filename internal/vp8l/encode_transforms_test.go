@@ -439,3 +439,116 @@ func TestEncodeOptionsNoTransforms(t *testing.T) {
 	}
 	pixelsMatch(t, img, got)
 }
+
+// --- color transform tests ---
+
+func TestColorTransformRoundTrip(t *testing.T) {
+	img := makeGradientImage(16, 16)
+	opts := EncodeOptions{Color: true, ColorBits: 3}
+	data, err := EncodeVP8LWithOptions(img, opts)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	got, err := DecodeVP8L(data)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	pixelsMatch(t, img, got)
+}
+
+func TestColorTransformWithSubtractGreen(t *testing.T) {
+	img := makeGradientImage(16, 16)
+	opts := EncodeOptions{Color: true, ColorBits: 3, SubtractGreen: true}
+	data, err := EncodeVP8LWithOptions(img, opts)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	got, err := DecodeVP8L(data)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	pixelsMatch(t, img, got)
+}
+
+func TestColorTransformCoefficients(t *testing.T) {
+	// Build a 4x4 image where R = 2*G (strong green-to-red correlation).
+	// The encoder should find a non-zero gToR coefficient.
+	img := image.NewNRGBA(image.Rect(0, 0, 4, 4))
+	for y := 0; y < 4; y++ {
+		for x := 0; x < 4; x++ {
+			g := uint8((x + y*4 + 10) % 128) // keep g in [10,137]
+			r := uint8(uint16(g) * 2 % 256)
+			img.SetNRGBA(x, y, color.NRGBA{R: r, G: g, B: 50, A: 255})
+		}
+	}
+
+	// Convert to pixels slice to call applyColorTransform directly.
+	pixels := make([]uint32, 4*4)
+	for y := 0; y < 4; y++ {
+		for x := 0; x < 4; x++ {
+			c := img.NRGBAAt(x, y)
+			pixels[y*4+x] = uint32(c.A)<<24 | uint32(c.R)<<16 | uint32(c.G)<<8 | uint32(c.B)
+		}
+	}
+
+	_, colorImage := applyColorTransform(pixels, 4, 4, 3) // bits=3 -> 1 block for 4x4
+	// colorImage[0] encodes: A=255, R=gToR, G=rToB, B=gToB
+	gToR := int8((colorImage[0] >> 16) & 0xff)
+	if gToR == 0 {
+		t.Errorf("expected non-zero gToR coefficient for strongly correlated R=2*G image, got 0")
+	}
+	t.Logf("gToR=%d (colorImage[0]=%08x)", gToR, colorImage[0])
+}
+
+func TestEncodeVP8LWithOptions_Color(t *testing.T) {
+	// Integration test: color + predictor + subtract-green all together.
+	img := makeGradientImage(32, 32)
+	opts := EncodeOptions{
+		Color:         true,
+		ColorBits:     4,
+		Predictor:     true,
+		PredictorBits: 4,
+		SubtractGreen: true,
+	}
+	data, err := EncodeVP8LWithOptions(img, opts)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	got, err := DecodeVP8L(data)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	pixelsMatch(t, img, got)
+}
+
+func TestColorTransformVariousSizes(t *testing.T) {
+	sizes := [][2]int{{4, 4}, {8, 8}, {16, 16}, {7, 13}, {33, 17}}
+	for _, sz := range sizes {
+		w, h := sz[0], sz[1]
+		img := makeGradientImage(w, h)
+		opts := EncodeOptions{Color: true, ColorBits: 3}
+		data, err := EncodeVP8LWithOptions(img, opts)
+		if err != nil {
+			t.Fatalf("encode %dx%d: %v", w, h, err)
+		}
+		got, err := DecodeVP8L(data)
+		if err != nil {
+			t.Fatalf("decode %dx%d: %v", w, h, err)
+		}
+		pixelsMatch(t, img, got)
+	}
+}
+
+func TestColorTransformDefaultEnabled(t *testing.T) {
+	// EncodeVP8L enables color transform for images > 32x32.
+	img := makeGradientImage(64, 64)
+	data, err := EncodeVP8L(img)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	got, err := DecodeVP8L(data)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	pixelsMatch(t, img, got)
+}

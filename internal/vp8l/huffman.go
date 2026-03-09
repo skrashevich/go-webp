@@ -508,7 +508,17 @@ func writeCodeLengths(bw *bitWriter, codeLengths []int) {
 		}
 	}
 
-	if len(symbols) <= 2 {
+	// Simple code is only usable when all symbols fit in 8 bits (0-255).
+	// LZ77 length codes are symbols 256-279, which require complex encoding.
+	canUseSimple := len(symbols) <= 2
+	for _, s := range symbols {
+		if s > 255 {
+			canUseSimple = false
+			break
+		}
+	}
+
+	if canUseSimple {
 		// Simple code: per VP8L spec, bit=1 means simple code.
 		bw.writeBit(true)
 
@@ -533,7 +543,7 @@ func writeCodeLengths(bw *bitWriter, codeLengths []int) {
 			return
 		}
 
-		// 2 symbols.
+		// 2 symbols, both <= 255.
 		bw.writeBits(1, 1) // numSymbols - 1 = 1
 		sym0 := symbols[0]
 		if sym0 > 1 {

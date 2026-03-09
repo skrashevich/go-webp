@@ -146,6 +146,38 @@ func readDistance(br *bitReader, distTree *huffTree, width int) (int, error) {
 	return vp8lDistanceToPlane(dist, width), nil
 }
 
+// linearToPlaneDistance converts a linear pixel distance (as used in the decoded
+// pixel array) to a VP8L "plane distance" value expected by getDistanceCode.
+// The VP8L spec encodes distance as a plane-distance code; the decoder then
+// converts it back via vp8lDistanceToPlane. We must invert that mapping.
+//
+// For plane values 1..120, vp8lDistanceToPlane does a table lookup.
+// For plane values >120, vp8lDistanceToPlane returns planeVal-120.
+//
+// We try every entry of distanceMapTable first (O(120)), then fall back to
+// the linear region.
+func linearToPlaneDistance(linearDist, width int) int {
+	if linearDist <= 0 {
+		return 1
+	}
+	// Try the table entries (plane values 1..120).
+	for i := 0; i < 120; i++ {
+		planeVal := i + 1
+		distCode := int(distanceMapTable[i])
+		yOff := distCode >> 4
+		xOff := 8 - (distCode & 0xf)
+		d := yOff*width + xOff
+		if d < 1 {
+			d = 1
+		}
+		if d == linearDist {
+			return planeVal
+		}
+	}
+	// Fall back: for planeVal > 120, vp8lDistanceToPlane returns planeVal-120.
+	return linearDist + 120
+}
+
 // --- LZ77 encoder ---
 
 const (
@@ -153,7 +185,9 @@ const (
 	hashSize    = 1 << hashBits
 	hashMult    = 0x1e35a7bd
 	minMatchLen = 2
-	maxMatchLen = 32768
+	// maxMatchLen is the maximum match length representable by VP8L length prefix codes.
+	// lengthBase[23]=3073, lengthExtraBits[23]=10 → max = 3073 + (1<<10 - 1) = 4096.
+	maxMatchLen = 4096
 	maxDist     = 32768 * 8
 )
 

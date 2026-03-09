@@ -16,6 +16,13 @@ type EncodeOptions struct {
 	// PredictorBits is the block-size exponent (block = 1<<PredictorBits).
 	// Valid range 2-11; 0 defaults to 4 (block size 16).
 	PredictorBits int
+	// Color applies the cross-color (channel correlation) transform.
+	Color bool
+	// ColorBits is the block-size exponent for the color transform (block = 1<<ColorBits).
+	// Valid range 2-11; 0 defaults to 4 (block size 16).
+	ColorBits int
+	// LZ77 enables LZ77 back-reference matching during pixel encoding.
+	LZ77 bool
 }
 
 // EncodeVP8L encodes an image as a VP8L lossless bitstream with default transforms:
@@ -28,10 +35,12 @@ func EncodeVP8L(img image.Image) ([]byte, error) {
 		SubtractGreen: true,
 		Palette:       true,
 	}
-	// Enable predictor for images larger than 32x32.
+	// Enable predictor and color transform for images larger than 32x32.
 	if w*h > 32*32 {
 		opts.Predictor = true
 		opts.PredictorBits = 4
+		opts.Color = true
+		opts.ColorBits = 4
 	}
 	return EncodeVP8LWithOptions(img, opts)
 }
@@ -175,9 +184,9 @@ func EncodeVP8LWithOptions(img image.Image, opts EncodeOptions) ([]byte, error) 
 		residual, predImage := applyPredictorTransform(pixels, currentWidth, height, bits)
 
 		// Write predictor transform header.
-		bw.writeBit(true)                            // has_transform
-		bw.writeBits(uint32(transformPredictor), 2)  // transform type
-		bw.writeBits(uint32(bits-2), 3)              // bits - 2
+		bw.writeBit(true)                           // has_transform
+		bw.writeBits(uint32(transformPredictor), 2) // transform type
+		bw.writeBits(uint32(bits-2), 3)             // bits - 2
 
 		predW := subSampleSize(currentWidth, bits)
 		predH := subSampleSize(height, bits)
@@ -187,6 +196,30 @@ func EncodeVP8LWithOptions(img image.Image, opts EncodeOptions) ([]byte, error) 
 		predictorApplied = true
 	}
 	_ = predictorApplied
+
+	// --- Color transform ---
+	if opts.Color && !paletteApplied {
+		bits := opts.ColorBits
+		if bits < 2 {
+			bits = 4
+		}
+		if bits > 11 {
+			bits = 11
+		}
+
+		transformed, colorImage := applyColorTransform(pixels, currentWidth, height, bits)
+
+		// Write color transform header.
+		bw.writeBit(true)                          // has_transform
+		bw.writeBits(uint32(transformColor), 2)    // transform type = 1
+		bw.writeBits(uint32(bits-2), 3)            // bits - 2
+
+		colorW := subSampleSize(currentWidth, bits)
+		colorH := subSampleSize(height, bits)
+		writeImageDataSubImage(bw, colorImage, colorW, colorH)
+
+		pixels = transformed
+	}
 
 	// --- Subtract green transform ---
 	if opts.SubtractGreen {
@@ -199,8 +232,12 @@ func EncodeVP8LWithOptions(img image.Image, opts EncodeOptions) ([]byte, error) 
 	// No more transforms.
 	bw.writeBit(false)
 
-	// Write image data.
-	writeImageData(bw, pixels, currentWidth, height)
+	// Write image data. Pass width to enable LZ77; pass 0 to disable.
+	lz77Width := 0
+	if opts.LZ77 {
+		lz77Width = currentWidth
+	}
+	writeImageData(bw, pixels, lz77Width, height)
 
 	return bw.bytes(), nil
 }
@@ -430,17 +467,24 @@ func residualCost(r uint32) int {
 	return a + g + re + b
 }
 
+// lz77Token represents a single unit of LZ77-encoded output: either a literal
+// pixel or a back-reference (length, distance) pair.
+type lz77Token struct {
+	isBackRef bool
+	pixel     uint32 // for literals
+	length    int    // for back-references
+	planeDist int    // for back-references: VP8L plane distance (input to getDistanceCode)
+}
+
 // writeImageData writes the main pixel data (top-level image).
 // Format: use_color_cache(0) + use_meta_huffman(0) + huffman trees + pixels.
 // This matches decodeEntropyImageLevel(topLevel=true) / decodeImageData.
 func writeImageData(bw *bitWriter, pixels []uint32, width, height int) {
 	// No color cache.
 	bw.writeBit(false)
-
 	// No meta-Huffman (top-level flag).
 	bw.writeBit(false)
-
-	writeHuffmanPixels(bw, pixels)
+	writeHuffmanPixelsWidth(bw, pixels, width)
 }
 
 // writeImageDataSubImage writes a sub-image used as transform data (palette, predictor, color).
@@ -449,41 +493,98 @@ func writeImageData(bw *bitWriter, pixels []uint32, width, height int) {
 func writeImageDataSubImage(bw *bitWriter, pixels []uint32, width, height int) {
 	// No color cache.
 	bw.writeBit(false)
-
 	// Note: topLevel=false decoder does NOT read a use_meta_huffman bit.
-	// We write only the single huffman group directly.
-	writeHuffmanPixels(bw, pixels)
+	writeHuffmanPixelsWidth(bw, pixels, width)
 }
 
 // writeHuffmanPixels writes the huffman trees and encoded pixels.
 // Used by both writeImageData and writeImageDataSubImage.
 func writeHuffmanPixels(bw *bitWriter, pixels []uint32) {
-	// Compute frequency tables for 5 channels.
+	writeHuffmanPixelsWidth(bw, pixels, 0)
+}
+
+// writeHuffmanPixelsWidth writes huffman trees and encoded pixels.
+// width is used for VP8L plane-distance conversion when width > 0 (enables LZ77).
+// width == 0 disables LZ77 matching (used for sub-images where LZ77 is not beneficial).
+func writeHuffmanPixelsWidth(bw *bitWriter, pixels []uint32, width int) {
+	// Pass 1: build token list.
+	// LZ77 is only used for the main image (width > 0).
+	var tokens []lz77Token
+	if width > 0 {
+		h := newLZ77Hash()
+		pos := 0
+		for pos < len(pixels) {
+			length, linearDist := findMatch(pixels, pos, h)
+			if length >= minMatchLen {
+				// Convert linear pixel distance to VP8L plane distance.
+				planeDist := linearToPlaneDistance(linearDist, width)
+				tokens = append(tokens, lz77Token{
+					isBackRef: true,
+					length:    length,
+					planeDist: planeDist,
+				})
+				// Hash all positions covered by the match (except the first,
+				// which findMatch already inserted into the hash table).
+				for k := 1; k < length; k++ {
+					if pos+k < len(pixels) {
+						v := pixels[pos+k]
+						key := lz77Hash32(v)
+						h.prev[(pos+k)%maxDist] = h.head[key]
+						h.head[key] = int32(pos + k)
+					}
+				}
+				pos += length
+			} else {
+				tokens = append(tokens, lz77Token{
+					isBackRef: false,
+					pixel:     pixels[pos],
+				})
+				pos++
+			}
+		}
+	} else {
+		tokens = make([]lz77Token, len(pixels))
+		for i, p := range pixels {
+			tokens[i] = lz77Token{isBackRef: false, pixel: p}
+		}
+	}
+
+	// Pass 2: count frequencies.
 	greenFreqs := make([]int, greenAlphabetSize())
 	redFreqs := make([]int, numColorCodes)
 	blueFreqs := make([]int, numColorCodes)
 	alphaFreqs := make([]int, numColorCodes)
 	distFreqs := make([]int, numDistanceCodes)
 
-	for _, p := range pixels {
-		g := int((p >> 8) & 0xff)
-		r := int((p >> 16) & 0xff)
-		b := int(p & 0xff)
-		a := int((p >> 24) & 0xff)
-		greenFreqs[g]++
-		redFreqs[r]++
-		blueFreqs[b]++
-		alphaFreqs[a]++
+	for _, tok := range tokens {
+		if tok.isBackRef {
+			lenCode, _, _ := getLengthCode(tok.length)
+			greenFreqs[lenCode]++
+			distCode, _, _ := getDistanceCode(tok.planeDist)
+			distFreqs[distCode]++
+		} else {
+			p := tok.pixel
+			g := int((p >> 8) & 0xff)
+			r := int((p >> 16) & 0xff)
+			b := int(p & 0xff)
+			a := int((p >> 24) & 0xff)
+			greenFreqs[g]++
+			redFreqs[r]++
+			blueFreqs[b]++
+			alphaFreqs[a]++
+		}
 	}
 	// Ensure distance has at least one symbol (required for valid tree).
-	distFreqs[0]++
+	if distFreqs[0] == 0 {
+		distFreqs[0]++
+	}
 
 	// Build Huffman codes.
 	greenCodes, greenLengths := buildHuffCodes(greenFreqs, 15)
 	redCodes, redLengths := buildHuffCodes(redFreqs, 15)
 	blueCodes, blueLengths := buildHuffCodes(blueFreqs, 15)
 	alphaCodes, alphaLengths := buildHuffCodes(alphaFreqs, 15)
-	_, distLengths := buildHuffCodes(distFreqs, 15)
+	distCodes, distLengths := buildHuffCodes(distFreqs, 15)
 
 	// Write code lengths for 5 trees.
 	writeCodeLengths(bw, greenLengths)
@@ -492,21 +593,39 @@ func writeHuffmanPixels(bw *bitWriter, pixels []uint32) {
 	writeCodeLengths(bw, alphaLengths)
 	writeCodeLengths(bw, distLengths)
 
-	// Write pixel data as literals only.
-	for _, p := range pixels {
-		g := int((p >> 8) & 0xff)
-		r := int((p >> 16) & 0xff)
-		b := int(p & 0xff)
-		a := int((p >> 24) & 0xff)
+	// Pass 3: write tokens.
+	for _, tok := range tokens {
+		if tok.isBackRef {
+			// Write length prefix code via green tree.
+			lenCode, lenExtraBits, lenExtra := getLengthCode(tok.length)
+			gc := greenCodes[lenCode]
+			bw.writeBits(gc.code, gc.nbits)
+			if lenExtraBits > 0 {
+				bw.writeBits(uint32(lenExtra), lenExtraBits)
+			}
+			// Write distance code.
+			distCode, distExtraBitsCount, distExtra := getDistanceCode(tok.planeDist)
+			dc := distCodes[distCode]
+			bw.writeBits(dc.code, dc.nbits)
+			if distExtraBitsCount > 0 {
+				bw.writeBits(uint32(distExtra), distExtraBitsCount)
+			}
+		} else {
+			p := tok.pixel
+			g := int((p >> 8) & 0xff)
+			r := int((p >> 16) & 0xff)
+			b := int(p & 0xff)
+			a := int((p >> 24) & 0xff)
 
-		gc := greenCodes[g]
-		bw.writeBits(gc.code, gc.nbits)
-		rc := redCodes[r]
-		bw.writeBits(rc.code, rc.nbits)
-		bc := blueCodes[b]
-		bw.writeBits(bc.code, bc.nbits)
-		ac := alphaCodes[a]
-		bw.writeBits(ac.code, ac.nbits)
+			gc := greenCodes[g]
+			bw.writeBits(gc.code, gc.nbits)
+			rc := redCodes[r]
+			bw.writeBits(rc.code, rc.nbits)
+			bc := blueCodes[b]
+			bw.writeBits(bc.code, bc.nbits)
+			ac := alphaCodes[a]
+			bw.writeBits(ac.code, ac.nbits)
+		}
 	}
 }
 

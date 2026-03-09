@@ -334,6 +334,127 @@ func applySubtractGreen(pixels []uint32) {
 	}
 }
 
+// applyColorTransform applies the forward color (cross-color) transform.
+// For each block it estimates per-block correlation coefficients gToR, gToB, rToB
+// and subtracts the predicted channel contributions.
+// Returns the transformed pixel array and the color-transform sub-image.
+// The sub-image pixel format (per the WebP spec) is:
+//
+//	A=255, R=gToR (signed 8-bit as uint8), G=rToB, B=gToB
+func applyColorTransform(pixels []uint32, width, height, bits int) ([]uint32, []uint32) {
+	blockSize := 1 << uint(bits)
+	colorW := subSampleSize(width, bits)
+	colorH := subSampleSize(height, bits)
+
+	colorImage := make([]uint32, colorW*colorH)
+	result := make([]uint32, len(pixels))
+	copy(result, pixels)
+
+	for by := 0; by < colorH; by++ {
+		for bx := 0; bx < colorW; bx++ {
+			x0 := bx * blockSize
+			y0 := by * blockSize
+			x1 := x0 + blockSize
+			y1 := y0 + blockSize
+			if x1 > width {
+				x1 = width
+			}
+			if y1 > height {
+				y1 = height
+			}
+
+			// Accumulate sums for least-squares coefficient estimation.
+			// gToR: minimize sum((r - gToR*g/32)^2) => gToR = 32*sum(g*r)/sum(g*g)
+			// gToB: minimize sum((b - gToB*g/32)^2) => gToB = 32*sum(g*b)/sum(g*g)
+			// rToB: uses r' (post gToR transform) to minimize sum((b' - rToB*r'/32)^2)
+			var sumGG, sumGR, sumGB int64
+			for y := y0; y < y1; y++ {
+				for x := x0; x < x1; x++ {
+					p := pixels[y*width+x]
+					g := int64((p >> 8) & 0xff)
+					r := int64((p >> 16) & 0xff)
+					b := int64(p & 0xff)
+					sumGG += g * g
+					sumGR += g * r
+					sumGB += g * b
+				}
+			}
+
+			var gToR, gToB int8
+			if sumGG > 0 {
+				gToR = clampToInt8(32 * sumGR / sumGG)
+				gToB = clampToInt8(32 * sumGB / sumGG)
+			}
+
+			// Compute rToB using rDec values, which mirror what the decoder sees:
+			// rDec = int32(uint8(r - (gToR*g)>>5)) + (gToR*g)>>5
+			var sumRR, sumRB int64
+			for y := y0; y < y1; y++ {
+				for x := x0; x < x1; x++ {
+					p := pixels[y*width+x]
+					g := int64((p >> 8) & 0xff)
+					r := int64((p >> 16) & 0xff)
+					b := int64(p & 0xff)
+					gCorr := (int64(gToR) * g) >> 5
+					rDec := int64(int32(uint8(r-gCorr))) + gCorr
+					bResid := b - (int64(gToB)*g)>>5
+					sumRR += rDec * rDec
+					sumRB += rDec * bResid
+				}
+			}
+
+			var rToB int8
+			if sumRR > 0 {
+				rToB = clampToInt8(32 * sumRB / sumRR)
+			}
+
+			// Pack coefficients into ARGB: A=255, R=gToR, G=rToB, B=gToB
+			colorImage[by*colorW+bx] = 0xff000000 |
+				uint32(uint8(gToR))<<16 |
+				uint32(uint8(rToB))<<8 |
+				uint32(uint8(gToB))
+
+			// Apply forward transform to all pixels in this block.
+			// The decoder reads rStored as an unsigned 8-bit value, adds (gToR*g)>>5
+			// without masking, then uses that unmasked value for the rToB correction.
+			// We must mirror that arithmetic exactly in the forward direction.
+			for y := y0; y < y1; y++ {
+				for x := x0; x < x1; x++ {
+					p := pixels[y*width+x]
+					g := int32((p >> 8) & 0xff)
+					r := int32((p >> 16) & 0xff)
+					b := int32(p & 0xff)
+					a := int32((p >> 24) & 0xff)
+
+					// rStored is what will be written (masked to 8 bits).
+					rStored := int32(uint8(r - (int32(gToR)*g)>>5))
+					// rDec mirrors what the decoder computes: stored uint8 + gToR correction.
+					rDec := rStored + (int32(gToR)*g)>>5
+					bPrime := b - (int32(gToB)*g)>>5 - (int32(rToB)*rDec)>>5
+
+					result[y*width+x] = uint32(a)<<24 |
+						uint32(rStored&0xff)<<16 |
+						uint32(g&0xff)<<8 |
+						uint32(bPrime&0xff)
+				}
+			}
+		}
+	}
+
+	return result, colorImage
+}
+
+// clampToInt8 clamps a value to the signed 8-bit range [-128, 127].
+func clampToInt8(v int64) int8 {
+	if v < -128 {
+		return -128
+	}
+	if v > 127 {
+		return 127
+	}
+	return int8(v)
+}
+
 // applyColorIndexing applies the color indexing transform (if <= 256 unique colors).
 // Returns transformed pixels, palette, and success flag.
 func applyColorIndexing(pixels []uint32, width, height int) ([]uint32, []uint32, bool) {
