@@ -1,4 +1,4 @@
-module go-webp
+module github.com/skrashevich/go-webp
 
 go 1.26.1
 
