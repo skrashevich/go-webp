@@ -58,7 +58,7 @@ func min(a, b int) int {
 }
 
 func TestFilterNoneRoundTrip(t *testing.T) {
-	alpha := makeAlpha(8, 8, func(x, y int) byte { return byte(x*y % 256) })
+	alpha := makeAlpha(8, 8, func(x, y int) byte { return byte(x * y % 256) })
 	testFilterRoundTrip(t, "8x8", alpha, 8, 8, FilterNone)
 }
 
@@ -119,32 +119,60 @@ func TestFilterNonePreservesData(t *testing.T) {
 	}
 }
 
-// Row 0 and column 0 should be stored as-is for horizontal and gradient.
 func TestFilterHorizontalRow0Col0(t *testing.T) {
-	alpha := makeAlpha(4, 4, func(x, y int) byte { return byte(x*10 + y*40) })
-	filtered := ApplyFilter(alpha, 4, 4, FilterHorizontal)
-	// Row 0 should be unchanged.
-	for x := 0; x < 4; x++ {
-		if filtered[x] != alpha[x] {
-			t.Errorf("horizontal: row0 col%d filtered=%d want=%d", x, filtered[x], alpha[x])
-		}
+	alpha := []byte{
+		10, 20, 30, 40,
+		50, 60, 70, 80,
 	}
-	// Column 0 of each row should be unchanged.
-	for y := 0; y < 4; y++ {
-		if filtered[y*4] != alpha[y*4] {
-			t.Errorf("horizontal: row%d col0 filtered=%d want=%d", y, filtered[y*4], alpha[y*4])
+	filtered := ApplyFilter(alpha, 4, 2, FilterHorizontal)
+	want := []byte{
+		10, 10, 10, 10,
+		40, 10, 10, 10,
+	}
+	for i, got := range filtered {
+		if got != want[i] {
+			t.Errorf("horizontal filtered[%d] = %d, want %d", i, got, want[i])
 		}
 	}
 }
 
 func TestFilterVerticalRow0(t *testing.T) {
-	alpha := makeAlpha(4, 4, func(x, y int) byte { return byte(x*10 + y*40) })
-	filtered := ApplyFilter(alpha, 4, 4, FilterVertical)
-	// Row 0 should be unchanged.
-	for x := 0; x < 4; x++ {
-		if filtered[x] != alpha[x] {
-			t.Errorf("vertical: row0 col%d filtered=%d want=%d", x, filtered[x], alpha[x])
+	alpha := []byte{
+		10, 20, 30, 40,
+		50, 60, 70, 80,
+	}
+	filtered := ApplyFilter(alpha, 4, 2, FilterVertical)
+	want := []byte{
+		10, 10, 10, 10,
+		40, 40, 40, 40,
+	}
+	for i, got := range filtered {
+		if got != want[i] {
+			t.Errorf("vertical filtered[%d] = %d, want %d", i, got, want[i])
 		}
+	}
+}
+
+func TestFilterGradientEdges(t *testing.T) {
+	alpha := []byte{
+		10, 20, 30,
+		40, 55, 70,
+		90, 120, 150,
+	}
+	filtered := ApplyFilter(alpha, 3, 3, FilterGradient)
+	want := []byte{
+		10, 10, 10,
+		30, 5, 5,
+		50, 15, 15,
+	}
+	for i, got := range filtered {
+		if got != want[i] {
+			t.Errorf("gradient filtered[%d] = %d, want %d", i, got, want[i])
+		}
+	}
+	recovered := ReverseFilter(filtered, 3, 3, FilterGradient)
+	if !bytes.Equal(recovered, alpha) {
+		t.Fatalf("gradient reverse filter mismatch: got %v want %v", recovered, alpha)
 	}
 }
 
@@ -314,6 +342,43 @@ func TestEncodeDecodeALPHWithNRGBAImage(t *testing.T) {
 	}
 	if !bytes.Equal(recovered, extracted) {
 		t.Error("NRGBA extracted alpha round-trip failed")
+	}
+}
+
+func TestEncodeDecodeALPHMethod1LargeWidth(t *testing.T) {
+	width := 16385
+	alpha := makeAlpha(width, 1, func(x, y int) byte { return byte((x * 13) % 256) })
+	chunk, err := EncodeALPH(alpha, width, 1, 1, FilterVertical)
+	if err != nil {
+		t.Fatalf("EncodeALPH large width: %v", err)
+	}
+	recovered, err := DecodeALPH(chunk, width, 1)
+	if err != nil {
+		t.Fatalf("DecodeALPH large width: %v", err)
+	}
+	if !bytes.Equal(recovered, alpha) {
+		t.Fatal("large-width ALPH method=1 round-trip failed")
+	}
+}
+
+func TestDecodeALPHRejectsInvalidFlags(t *testing.T) {
+	alpha := []byte{0, 32, 64, 96}
+	chunk, err := EncodeALPH(alpha, 4, 1, 0, FilterNone)
+	if err != nil {
+		t.Fatalf("EncodeALPH: %v", err)
+	}
+	chunk[0] |= 0x40
+	if _, err := DecodeALPH(chunk, 4, 1); err == nil {
+		t.Fatal("DecodeALPH accepted reserved ALPH header bits")
+	}
+
+	chunk, err = EncodeALPH(alpha, 4, 1, 0, FilterNone)
+	if err != nil {
+		t.Fatalf("EncodeALPH: %v", err)
+	}
+	chunk[0] |= 0x20
+	if _, err := DecodeALPH(chunk, 4, 1); err == nil {
+		t.Fatal("DecodeALPH accepted unsupported preprocessing mode")
 	}
 }
 

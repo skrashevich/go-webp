@@ -37,18 +37,14 @@ func (d *Decoder) DecodeConfig() (image.Config, error) {
 		return image.Config{}, errors.New("vp8l: invalid signature")
 	}
 	br := newBitReader(d.data[1:])
-	wBits, err := br.readBits(14)
-	if err != nil {
-		return image.Config{}, err
-	}
-	hBits, err := br.readBits(14)
+	header, err := readImageHeader(br)
 	if err != nil {
 		return image.Config{}, err
 	}
 	return image.Config{
 		ColorModel: color.NRGBAModel,
-		Width:      int(wBits) + 1,
-		Height:     int(hBits) + 1,
+		Width:      header.width,
+		Height:     header.height,
 	}, nil
 }
 

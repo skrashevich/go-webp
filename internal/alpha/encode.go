@@ -46,10 +46,11 @@ func EncodeALPHWithPreprocessing(alpha []byte, width, height int, method int, fi
 // The returned bytes begin with a flags byte followed by compressed data.
 //
 // Flags byte layout (per WebP spec):
-//   bits 0-1: compression method (0=none, 1=VP8L)
-//   bits 2-3: filter type (0=none, 1=horizontal, 2=vertical, 3=gradient)
-//   bits 4-5: pre-processing (0=none) — always 0 here
-//   bits 6-7: reserved (0)
+//
+//	bits 0-1: compression method (0=none, 1=VP8L)
+//	bits 2-3: filter type (0=none, 1=horizontal, 2=vertical, 3=gradient)
+//	bits 4-5: pre-processing (0=none) — always 0 here
+//	bits 6-7: reserved (0)
 func EncodeALPH(alpha []byte, width, height int, method int, filter FilterType) ([]byte, error) {
 	if len(alpha) != width*height {
 		return nil, errors.New("alpha: alpha plane size mismatch")
@@ -83,8 +84,15 @@ func DecodeALPH(data []byte, width, height int) ([]byte, error) {
 	}
 
 	flags := data[0]
+	if flags>>6 != 0 {
+		return nil, errors.New("alpha: reserved ALPH header bits must be zero")
+	}
 	method := int(flags & 0x03)
 	filter := FilterType((flags >> 2) & 0x03)
+	preprocess := (flags >> 4) & 0x03
+	if preprocess > 1 {
+		return nil, errors.New("alpha: unsupported preprocessing mode")
+	}
 	payload := data[1:]
 
 	decompressed, err := Decompress(payload, width, height, method)

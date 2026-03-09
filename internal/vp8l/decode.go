@@ -3,7 +3,6 @@ package vp8l
 import (
 	"errors"
 	"image"
-	"image/color"
 )
 
 const vp8lSignature = 0x2f
@@ -18,78 +17,15 @@ func DecodeVP8L(data []byte) (*image.NRGBA, error) {
 	}
 
 	br := newBitReader(data[1:])
-
-	// Read width (14 bits) and height (14 bits).
-	wBits, err := br.readBits(14)
+	header, err := readImageHeader(br)
 	if err != nil {
 		return nil, err
 	}
-	width := int(wBits) + 1
-
-	hBits, err := br.readBits(14)
+	pixels, err := decodeImageStream(br, header.width, header.height)
 	if err != nil {
 		return nil, err
 	}
-	height := int(hBits) + 1
-
-	// Alpha hint (1 bit, ignored for decoding).
-	_, err = br.readBit()
-	if err != nil {
-		return nil, err
-	}
-
-	// Version (3 bits, must be 0).
-	ver, err := br.readBits(3)
-	if err != nil {
-		return nil, err
-	}
-	if ver != 0 {
-		return nil, errors.New("vp8l: unsupported version")
-	}
-
-	// Read transforms.
-	var transforms []*transform
-	decodeWidth := width
-
-	for {
-		hasTransform, err := br.readBit()
-		if err != nil {
-			return nil, err
-		}
-		if !hasTransform {
-			break
-		}
-		t, newWidth, err := readTransform(br, decodeWidth, height)
-		if err != nil {
-			return nil, err
-		}
-		transforms = append(transforms, t)
-		decodeWidth = newWidth
-	}
-
-	// Decode pixel data.
-	pixels, err := decodeImageData(br, decodeWidth, height, width)
-	if err != nil {
-		return nil, err
-	}
-
-	// Apply inverse transforms.
-	pixels = inverseTransformsWithWidths(pixels, transforms, decodeWidth, width, height)
-
-	// Convert ARGB to NRGBA image.
-	img := image.NewNRGBA(image.Rect(0, 0, width, height))
-	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
-			p := pixels[y*width+x]
-			a := uint8(p >> 24)
-			r := uint8(p >> 16)
-			g := uint8(p >> 8)
-			b := uint8(p)
-			img.SetNRGBA(x, y, color.NRGBA{R: r, G: g, B: b, A: a})
-		}
-	}
-
-	return img, nil
+	return pixelsToNRGBA(pixels, header.width, header.height), nil
 }
 
 // inverseTransformsWithWidths applies inverse transforms tracking width changes.
@@ -186,6 +122,9 @@ func decodeImageData(br *bitReader, width, height, origWidth int) ([]uint32, err
 	if useColorCache {
 		bits, err := br.readBits(4)
 		if err != nil {
+			return nil, err
+		}
+		if err := validateColorCacheBits(bits); err != nil {
 			return nil, err
 		}
 		ccBits = uint(bits)
@@ -387,6 +326,9 @@ func decodeEntropyImageLevel(br *bitReader, width, height int, topLevel bool) ([
 	if useColorCache {
 		bits, err := br.readBits(4)
 		if err != nil {
+			return nil, err
+		}
+		if err := validateColorCacheBits(bits); err != nil {
 			return nil, err
 		}
 		ccBits = uint(bits)

@@ -16,8 +16,20 @@ import (
 // Each frame is encoded independently as a VP8 (lossy) or VP8L (lossless) keyframe.
 // If opts is nil, lossless encoding with default settings is used.
 func Encode(w io.Writer, anim *Animation, opts *AnimationOptions) error {
+	if anim == nil {
+		return fmt.Errorf("anim: animation is nil")
+	}
 	if opts == nil {
 		opts = &AnimationOptions{}
+	}
+	if err := validateCanvasDimensions(anim.Width, anim.Height); err != nil {
+		return fmt.Errorf("anim: %w", err)
+	}
+	if len(anim.Frames) == 0 {
+		return fmt.Errorf("anim: animation has no frames")
+	}
+	if opts.Lossy && framesHaveAlpha(anim) {
+		return fmt.Errorf("anim: lossy animation frames with alpha are not supported")
 	}
 
 	// Encode all frames first so we know total size.
@@ -27,6 +39,9 @@ func Encode(w io.Writer, anim *Animation, opts *AnimationOptions) error {
 
 	encoded := make([]encodedFrame, len(anim.Frames))
 	for i, frame := range anim.Frames {
+		if _, _, err := validateFrameGeometry(&frame, anim.Width, anim.Height); err != nil {
+			return fmt.Errorf("anim: frame %d geometry: %w", i, err)
+		}
 		anmfPayload, err := encodeANMFPayload(&frame, opts)
 		if err != nil {
 			return fmt.Errorf("anim: encoding frame %d: %w", i, err)

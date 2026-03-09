@@ -29,8 +29,7 @@ func GradientPredictor(a, b, c byte) byte {
 	return byte(g)
 }
 
-// ApplyFilter applies a predictive filter to raw alpha data and returns the filtered data.
-// Row 0 always uses no prediction. Column 0 uses no prediction for horizontal/gradient.
+// ApplyFilter applies the ALPH predictive filter defined by the WebP container spec.
 func ApplyFilter(alpha []byte, width, height int, filter FilterType) []byte {
 	out := make([]byte, len(alpha))
 	if filter == FilterNone {
@@ -43,34 +42,48 @@ func ApplyFilter(alpha []byte, width, height int, filter FilterType) []byte {
 			actual := alpha[i]
 			switch filter {
 			case FilterHorizontal:
-				if y == 0 || x == 0 {
-					out[i] = actual
+				pred := byte(0)
+				if x == 0 {
+					if y > 0 {
+						pred = alpha[i-width]
+					}
 				} else {
-					out[i] = byte((int(actual) - int(alpha[i-1])) & 0xff)
+					pred = alpha[i-1]
 				}
+				out[i] = byte((int(actual) - int(pred)) & 0xff)
 			case FilterVertical:
+				pred := byte(0)
 				if y == 0 {
-					out[i] = actual
+					if x > 0 {
+						pred = alpha[i-1]
+					}
 				} else {
-					out[i] = byte((int(actual) - int(alpha[i-width])) & 0xff)
+					pred = alpha[i-width]
 				}
+				out[i] = byte((int(actual) - int(pred)) & 0xff)
 			case FilterGradient:
-				if y == 0 || x == 0 {
-					out[i] = actual
-				} else {
+				pred := byte(0)
+				switch {
+				case x == 0 && y == 0:
+					pred = 0
+				case x == 0:
+					pred = alpha[i-width]
+				case y == 0:
+					pred = alpha[i-1]
+				default:
 					left := alpha[i-1]
 					top := alpha[i-width]
 					topLeft := alpha[i-width-1]
-					pred := GradientPredictor(left, top, topLeft)
-					out[i] = byte((int(actual) - int(pred)) & 0xff)
+					pred = GradientPredictor(left, top, topLeft)
 				}
+				out[i] = byte((int(actual) - int(pred)) & 0xff)
 			}
 		}
 	}
 	return out
 }
 
-// ReverseFilter reverses a predictive filter to recover raw alpha data.
+// ReverseFilter reverses the ALPH predictive filter defined by the WebP container spec.
 func ReverseFilter(filtered []byte, width, height int, filter FilterType) []byte {
 	out := make([]byte, len(filtered))
 	if filter == FilterNone {
@@ -83,27 +96,41 @@ func ReverseFilter(filtered []byte, width, height int, filter FilterType) []byte
 			v := filtered[i]
 			switch filter {
 			case FilterHorizontal:
-				if y == 0 || x == 0 {
-					out[i] = v
+				pred := byte(0)
+				if x == 0 {
+					if y > 0 {
+						pred = out[i-width]
+					}
 				} else {
-					out[i] = byte((int(v) + int(out[i-1])) & 0xff)
+					pred = out[i-1]
 				}
+				out[i] = byte((int(v) + int(pred)) & 0xff)
 			case FilterVertical:
+				pred := byte(0)
 				if y == 0 {
-					out[i] = v
+					if x > 0 {
+						pred = out[i-1]
+					}
 				} else {
-					out[i] = byte((int(v) + int(out[i-width])) & 0xff)
+					pred = out[i-width]
 				}
+				out[i] = byte((int(v) + int(pred)) & 0xff)
 			case FilterGradient:
-				if y == 0 || x == 0 {
-					out[i] = v
-				} else {
+				pred := byte(0)
+				switch {
+				case x == 0 && y == 0:
+					pred = 0
+				case x == 0:
+					pred = out[i-width]
+				case y == 0:
+					pred = out[i-1]
+				default:
 					left := out[i-1]
 					top := out[i-width]
 					topLeft := out[i-width-1]
-					pred := GradientPredictor(left, top, topLeft)
-					out[i] = byte((int(v) + int(pred)) & 0xff)
+					pred = GradientPredictor(left, top, topLeft)
 				}
+				out[i] = byte((int(v) + int(pred)) & 0xff)
 			}
 		}
 	}

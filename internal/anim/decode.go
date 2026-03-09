@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"image/color"
 	"io"
 
 	"github.com/skrashevich/go-webp/internal/riff"
@@ -20,6 +21,9 @@ func Decode(r io.Reader, vp8xInfo VP8XInfo) (*Animation, error) {
 	anim := &Animation{
 		Width:  int(vp8xInfo.Width) + 1,
 		Height: int(vp8xInfo.Height) + 1,
+	}
+	if err := validateCanvasDimensions(anim.Width, anim.Height); err != nil {
+		return nil, fmt.Errorf("anim: %w", err)
 	}
 
 	chunks, err := riff.ReadAllChunks(r)
@@ -40,7 +44,7 @@ func Decode(r io.Reader, vp8xInfo VP8XInfo) (*Animation, error) {
 			if !animSeen {
 				return nil, errors.New("anim: ANMF chunk before ANIM chunk")
 			}
-			frame, err := DecodeFrame(chunk.Data)
+			frame, err := DecodeFrame(chunk.Data, anim.Width, anim.Height)
 			if err != nil {
 				return nil, fmt.Errorf("anim: ANMF frame %d: %w", len(anim.Frames), err)
 			}
@@ -80,39 +84,49 @@ func parseANIM(data []byte, anim *Animation) error {
 //   - 3 bytes: duration ms (24-bit LE)
 //   - 1 byte:  flags (bit0=dispose_bg, bit1=no_blend)
 //   - N bytes: VP8/VP8L chunk (frame bitstream)
-func DecodeFrame(data []byte) (*Frame, error) {
-	if len(data) < 16 {
-		return nil, errors.New("anim: ANMF payload too short")
+func DecodeFrame(data []byte, canvasWidth, canvasHeight int) (*Frame, error) {
+	header, payload, err := riff.ParseANMF(data)
+	if err != nil {
+		return nil, err
 	}
-
-	x := int(readUint24LE(data[0:3])) * 2
-	y := int(readUint24LE(data[3:6])) * 2
-	// fw and fh are encoded as (value - 1).
-	_ = int(readUint24LE(data[6:9])) + 1  // fw — used implicitly by the decoder
-	_ = int(readUint24LE(data[9:12])) + 1 // fh — used implicitly by the decoder
-	duration := int(readUint24LE(data[12:15]))
-	flags := data[15]
+	if data[15]&^byte(0x03) != 0 {
+		return nil, errors.New("anim: ANMF reserved flag bits must be zero")
+	}
 
 	frame := &Frame{
-		X:        x,
-		Y:        y,
-		Duration: duration,
+		X:        header.X,
+		Y:        header.Y,
+		Duration: header.Duration,
 	}
-	if flags&0x01 != 0 {
+	if header.Dispose {
 		frame.Dispose = DisposeBackground
 	} else {
 		frame.Dispose = DisposeNone
 	}
-	if flags&0x02 != 0 {
+	if header.Blend {
 		frame.Blend = BlendNone
 	} else {
 		frame.Blend = BlendAlpha
 	}
+	frameWidth, frameHeight, err := validateFrameGeometry(&Frame{
+		Image: frameImageStub{width: header.Width, height: header.Height},
+		X:     frame.X,
+		Y:     frame.Y,
+	}, canvasWidth, canvasHeight)
+	if err != nil {
+		return nil, err
+	}
 
 	// Remaining bytes are the frame bitstream: one VP8/VP8L chunk.
-	img, err := decodeANMFImage(data[16:])
+	img, err := decodeANMFImage(payload)
 	if err != nil {
 		return nil, fmt.Errorf("anim: frame bitstream: %w", err)
+	}
+	if img.Bounds().Dx() != frameWidth || img.Bounds().Dy() != frameHeight {
+		return nil, fmt.Errorf(
+			"anim: ANMF header size %dx%d does not match decoded frame %dx%d",
+			frameWidth, frameHeight, img.Bounds().Dx(), img.Bounds().Dy(),
+		)
 	}
 	frame.Image = img
 
@@ -144,4 +158,21 @@ func decodeANMFImage(data []byte) (image.Image, error) {
 // readUint24LE reads a 24-bit little-endian value from 3 bytes.
 func readUint24LE(b []byte) uint32 {
 	return uint32(b[0]) | uint32(b[1])<<8 | uint32(b[2])<<16
+}
+
+type frameImageStub struct {
+	width  int
+	height int
+}
+
+func (s frameImageStub) ColorModel() color.Model {
+	return color.NRGBAModel
+}
+
+func (s frameImageStub) Bounds() image.Rectangle {
+	return image.Rect(0, 0, s.width, s.height)
+}
+
+func (s frameImageStub) At(x, y int) color.Color {
+	return color.NRGBA{}
 }
