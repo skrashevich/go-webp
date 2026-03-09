@@ -1,0 +1,82 @@
+package vp8
+
+import (
+	"bytes"
+	"fmt"
+	"image"
+	"image/color"
+	"image/png"
+	"math"
+	"os"
+	"os/exec"
+	"testing"
+
+	refvp8 "golang.org/x/image/vp8"
+)
+
+func TestCrossGradient(t *testing.T) {
+	// Generate a simple gradient PNG.
+	gradPath := "/tmp/gradient_128.png"
+	img := image.NewRGBA(image.Rect(0, 0, 128, 128))
+	for y := 0; y < 128; y++ {
+		for x := 0; x < 128; x++ {
+			v := uint8((x + y) * 255 / 254)
+			img.Set(x, y, color.RGBA{v, v, v, 255})
+		}
+	}
+	f, _ := os.Create(gradPath)
+	png.Encode(f, img)
+	f.Close()
+
+	for _, q := range []int{75, 50, 90} {
+		webpPath := fmt.Sprintf("/tmp/gradient_128_q%d.webp", q)
+		cmd := exec.Command("ffmpeg", "-y", "-i", gradPath,
+			"-c:v", "libwebp", "-quality", fmt.Sprintf("%d", q), webpPath)
+		cmd.Stderr = nil
+		if err := cmd.Run(); err != nil {
+			t.Fatal(err)
+		}
+
+		data, _ := os.ReadFile(webpPath)
+		chunkSize := int(data[16]) | int(data[17])<<8 | int(data[18])<<16 | int(data[19])<<24
+		vp8data := data[20 : 20+chunkSize]
+
+		// Reference decode.
+		dec := refvp8.NewDecoder()
+		dec.Init(bytes.NewReader(vp8data), len(vp8data))
+		dec.DecodeFrameHeader()
+		refImgYCbCr, _ := dec.DecodeFrame()
+
+		// Our decode.
+		ownImg, err := Decode(vp8data)
+		if err != nil {
+			t.Fatalf("q=%d: %v", q, err)
+		}
+		ownYCbCr := ownImg.(*image.YCbCr)
+
+		b := refImgYCbCr.Bounds()
+		w, h := b.Dx(), b.Dy()
+		var sumSq float64
+		maxErr := 0
+		for y := 0; y < h; y++ {
+			for x := 0; x < w; x++ {
+				rY := int(refImgYCbCr.Y[(y+b.Min.Y)*refImgYCbCr.YStride+x+b.Min.X])
+				oY := int(ownYCbCr.Y[y*ownYCbCr.YStride+x])
+				d := rY - oY
+				sumSq += float64(d * d)
+				if d < 0 {
+					d = -d
+				}
+				if d > maxErr {
+					maxErr = d
+				}
+			}
+		}
+		mse := sumSq / float64(w*h)
+		psnr := 999.0
+		if mse > 0 {
+			psnr = 10 * math.Log10(255*255/mse)
+		}
+		fmt.Printf("gradient 128x128 q=%d: PSNR=%.1f dB, maxErr=%d\n", q, psnr, maxErr)
+	}
+}
