@@ -34,6 +34,9 @@ var (
 	FourCCALPH = FourCC{'A', 'L', 'P', 'H'}
 	FourCCANIM = FourCC{'A', 'N', 'I', 'M'}
 	FourCCANMF = FourCC{'A', 'N', 'M', 'F'}
+	FourCCICCP = FourCC{'I', 'C', 'C', 'P'}
+	FourCCEXIF = FourCC{'E', 'X', 'I', 'F'}
+	FourCCXMP  = FourCC{'X', 'M', 'P', ' '}
 )
 
 // Chunk represents a single RIFF chunk.
@@ -183,7 +186,147 @@ func ParseVP8X(data []byte) (*VP8XChunk, error) {
 	}
 	flags := VP8XFlags(binary.LittleEndian.Uint32(data[0:4]))
 	// Width and height are stored as 3-byte little-endian values.
-	width := uint32(data[4]) | uint32(data[5])<<8 | uint32(data[6])<<16
-	height := uint32(data[7]) | uint32(data[8])<<8 | uint32(data[9])<<16
+	width := getUint24LE(data[4:7])
+	height := getUint24LE(data[7:10])
 	return &VP8XChunk{Flags: flags, Width: width, Height: height}, nil
+}
+
+// Encode serialises the VP8XChunk into its 10-byte on-disk representation.
+func (v *VP8XChunk) Encode() []byte {
+	b := make([]byte, 10)
+	binary.LittleEndian.PutUint32(b[0:4], uint32(v.Flags))
+	putUint24LE(b[4:7], v.Width)
+	putUint24LE(b[7:10], v.Height)
+	return b
+}
+
+// WriteVP8X writes a complete VP8X chunk to w.
+// width and height are the canvas dimensions (not minus one).
+func WriteVP8X(w io.Writer, flags VP8XFlags, width, height int) error {
+	chunk := &VP8XChunk{
+		Flags:  flags,
+		Width:  uint32(width - 1),
+		Height: uint32(height - 1),
+	}
+	return WriteChunk(w, FourCCVP8X, chunk.Encode())
+}
+
+// --- ALPH chunk header ---
+
+// ALPHHeader holds the decoded flags from the first byte of an ALPH chunk.
+type ALPHHeader struct {
+	// Method: 0=no compression, 1=lossless VP8L
+	Method int
+	// Filter: 0=none, 1=horizontal, 2=vertical, 3=gradient
+	Filter int
+	// Preprocessing: 0=none, 1=level reduction
+	Preprocessing int
+}
+
+// ParseALPHHeader decodes the single flags byte at the start of an ALPH chunk.
+func ParseALPHHeader(data byte) ALPHHeader {
+	return ALPHHeader{
+		Method:        int(data & 0x03),
+		Filter:        int((data >> 2) & 0x03),
+		Preprocessing: int((data >> 4) & 0x03),
+	}
+}
+
+// Encode encodes the ALPHHeader back into a single byte.
+func (h ALPHHeader) Encode() byte {
+	return byte(h.Method&0x03) | byte((h.Filter&0x03)<<2) | byte((h.Preprocessing&0x03)<<4)
+}
+
+// --- ANIM chunk ---
+
+// ANIMChunk holds the data from an ANIM chunk.
+type ANIMChunk struct {
+	// BackgroundColor is the background colour in BGRA byte order packed as uint32 LE.
+	BackgroundColor uint32
+	// LoopCount is the number of times to loop the animation; 0 means infinite.
+	LoopCount uint16
+}
+
+// ParseANIM parses a 6-byte ANIM chunk payload.
+func ParseANIM(data []byte) (ANIMChunk, error) {
+	if len(data) < 6 {
+		return ANIMChunk{}, errors.New("riff: ANIM chunk too short")
+	}
+	return ANIMChunk{
+		BackgroundColor: binary.LittleEndian.Uint32(data[0:4]),
+		LoopCount:       binary.LittleEndian.Uint16(data[4:6]),
+	}, nil
+}
+
+// Encode serialises the ANIMChunk into its 6-byte on-disk representation.
+func (a ANIMChunk) Encode() []byte {
+	b := make([]byte, 6)
+	binary.LittleEndian.PutUint32(b[0:4], a.BackgroundColor)
+	binary.LittleEndian.PutUint16(b[4:6], a.LoopCount)
+	return b
+}
+
+// --- ANMF chunk header ---
+
+// ANMFHeader holds the 16-byte header of an ANMF chunk.
+type ANMFHeader struct {
+	// X and Y are the frame position in pixels (already multiplied by 2).
+	X, Y int
+	// Width and Height are the frame dimensions in pixels (already +1).
+	Width, Height int
+	// Duration is the frame display duration in milliseconds.
+	Duration int
+	// Dispose indicates the frame should be cleared to background colour after display.
+	Dispose bool
+	// Blend indicates that no alpha blending should be performed (no_blend flag).
+	Blend bool
+}
+
+// ParseANMF parses an ANMF chunk payload, returning the header and the
+// remaining frame bitstream bytes.
+func ParseANMF(data []byte) (ANMFHeader, []byte, error) {
+	if len(data) < 16 {
+		return ANMFHeader{}, nil, errors.New("riff: ANMF chunk too short")
+	}
+	h := ANMFHeader{
+		X:        int(getUint24LE(data[0:3])) * 2,
+		Y:        int(getUint24LE(data[3:6])) * 2,
+		Width:    int(getUint24LE(data[6:9])) + 1,
+		Height:   int(getUint24LE(data[9:12])) + 1,
+		Duration: int(getUint24LE(data[12:15])),
+		Dispose:  data[15]&0x01 != 0,
+		Blend:    data[15]&0x02 != 0,
+	}
+	return h, data[16:], nil
+}
+
+// Encode serialises the ANMFHeader into its 16-byte on-disk representation.
+func (h ANMFHeader) Encode() []byte {
+	b := make([]byte, 16)
+	putUint24LE(b[0:3], uint32(h.X/2))
+	putUint24LE(b[3:6], uint32(h.Y/2))
+	putUint24LE(b[6:9], uint32(h.Width-1))
+	putUint24LE(b[9:12], uint32(h.Height-1))
+	putUint24LE(b[12:15], uint32(h.Duration))
+	var flags byte
+	if h.Dispose {
+		flags |= 0x01
+	}
+	if h.Blend {
+		flags |= 0x02
+	}
+	b[15] = flags
+	return b
+}
+
+// --- uint24 helpers ---
+
+func getUint24LE(b []byte) uint32 {
+	return uint32(b[0]) | uint32(b[1])<<8 | uint32(b[2])<<16
+}
+
+func putUint24LE(b []byte, v uint32) {
+	b[0] = byte(v)
+	b[1] = byte(v >> 8)
+	b[2] = byte(v >> 16)
 }
