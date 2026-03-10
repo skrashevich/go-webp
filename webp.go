@@ -270,8 +270,8 @@ func applyAlphaToVP8(img image.Image, alphData []byte) (image.Image, error) {
 	}
 	// Fallback: convert any image to NRGBA with alpha.
 	out := image.NewNRGBA(image.Rect(0, 0, w, h))
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
+	for y := range h {
+		for x := range w {
 			r, g, b, _ := img.At(bounds.Min.X+x, bounds.Min.Y+y).RGBA()
 			a := alphaPlane[y*w+x]
 			out.SetNRGBA(x, y, color.NRGBA{

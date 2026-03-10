@@ -12,8 +12,8 @@ import (
 // newTestImage creates a small NRGBA image for use in tests.
 func newTestImage(w, h int) image.Image {
 	img := image.NewNRGBA(image.Rect(0, 0, w, h))
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
+	for y := range h {
+		for x := range w {
 			img.Set(x, y, color.NRGBA{R: uint8(x * 10), G: uint8(y * 10), B: 128, A: 255})
 		}
 	}
