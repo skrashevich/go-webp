@@ -3,6 +3,13 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/skrashevich/go-webp.svg)](https://pkg.go.dev/github.com/skrashevich/go-webp)
 [![DeepWiki](https://img.shields.io/badge/DeepWiki-skrashevich%2Fgo--webp-blue.svg?logo=data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cGF0aCBkPSJNNCAxOGgxNk00IDEyaDE2TTQgNmgxNiIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPjwvc3ZnPg==)](https://deepwiki.com/skrashevich/go-webp)
 
+
+<!-- badges:start -->
+[![GitHub stars](https://img.shields.io/github/stars/skrashevich/go-webp?style=flat-square)](https://github.com/skrashevich/go-webp/stargazers)
+[![Last commit](https://img.shields.io/github/last-commit/skrashevich/go-webp?style=flat-square)](https://github.com/skrashevich/go-webp/commits/main)
+[![License](https://img.shields.io/github/license/skrashevich/go-webp?style=flat-square)](https://github.com/skrashevich/go-webp/blob/main/LICENSE)
+<!-- badges:end -->
+
 Pure Go encoder and decoder for the [WebP](https://developers.google.com/speed/webp) image format. No CGO, no libwebp — just Go.
 
 Supports **lossy (VP8)**, **lossless (VP8L)**, **extended format (VP8X)** with alpha channel in lossy mode, **animation**, and **metadata (ICC, EXIF, XMP)**.
